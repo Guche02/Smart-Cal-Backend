@@ -3,7 +3,7 @@ require('dotenv').config();
 
 
 const getCalorie = async (foodName) => {
-  const apiKey = "8NodKSoGLaiM7IxZOpqTww==2lzyjeTwpBDItj0S";
+  const apiKey = "Your API Key";
 
   try {
     const response = await axios.get(`https://api.api-ninjas.com/v1/nutrition?query=${foodName}`, {
