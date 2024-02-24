@@ -6,20 +6,23 @@ const axios = require("axios");
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const session = require("express-session");
-const flash = require("connect-flash");
 const bcrypt = require('bcrypt');
 const FormData = require("form-data");
 const { getCalorie } = require("./routes/api_request");
 const jwt = require('jsonwebtoken');
+const path = require('path'); // Add this line to import the path module
 
 // Importing the User model
 const User = require("./model/userModel");
 
 const fs = require("fs"); //for image handling.
-const { Console } = require("console");
-const { userInfo } = require("os");
+
 
 const app = express();
+
+// Serve static files from the 'images' folder
+app.use('/images', express.static(path.join(__dirname, 'images')));
+
 
 // Session middleware
 app.use(session({
@@ -34,10 +37,9 @@ app.use(passport.session());
 
 app.use(cors());
 app.use(express.json());
-app.use(flash())
 
 // Connection string of MongoDB
-const connection_url = "Your Mongo URL";
+const connection_url = "mongodb+srv://loozasubedy998:mongo%40jojo.com@cluster0.0h7kiso.mongodb.net/SmartcalDB?retryWrites=true&w=majority";
 mongoose.connect(connection_url);
 
 passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
@@ -154,12 +156,82 @@ app.get("/getUserDetails", async (req, res) => {
   }
 });
 
+// Define the path to the images folder
+const imagesFolder = path.join(__dirname, 'images');
+
+// Get the list of image files synchronously
+const imageFiles = fs.readdirSync(imagesFolder)
+  .filter(file => file.endsWith('.jpg') || file.endsWith('.jpeg') || file.endsWith('.png'));
+
+// Define a route to serve the image file
+app.get("/getImage", (req, res) => {
+  try {
+    // Read the list of image files from the images folder
+    fs.readdir(imagesFolder, (err, files) => {
+      if (err) {
+        console.error('Error reading images folder:', err);
+        return res.status(500).json({ error: 'Internal Server Error' });
+      }
+
+      // Filter only files with image extensions
+      const imageFiles = files.filter(file => /\.(jpg|jpeg|png)$/i.test(file));
+
+      // Check if there are any image files
+      if (imageFiles.length === 0) {
+        return res.status(404).json({ error: 'No images found' });
+      }
+
+      // Get the path of the first image file
+      const imagePath = path.join(imagesFolder, imageFiles[0]);
+
+      // Create a read stream to the image file
+      const imageStream = fs.createReadStream(imagePath);
+
+      // Set the appropriate content type
+      res.setHeader('Content-Type', 'image/jpeg');
+
+      // Pipe the image stream to the response
+      imageStream.pipe(res);
+    });
+  } catch (error) {
+    console.error('Error serving image:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// DELETE route to delete the current image file
+app.delete("/deleteImage", (req, res) => {
+  try {
+    const currentImagePath = path.join(imagesFolder, imageFiles[0]);
+
+    // Check if the current image file exists
+    if (fs.existsSync(currentImagePath)) {
+      // Delete the file
+      fs.unlinkSync(currentImagePath);
+      console.log(`Deleted image file: ${imageFiles[0]}`);
+      // Increment the currentIndex for the next request
+    } else {
+      res.status(404).json({ error: 'Image not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting image:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // Route to get device information and detect food items
 app.get("/getDeviceInfo", async (req, res) => {
 
   const { dateTime } = req.query; // Get date-time from the query parameters
 
-  const imagePath = "test.jpg";
+  let imagePath;
+  if (imageFiles.length === 0) {
+    // No images found in the folder
+    return res.status(404).json({ error: 'No images found' });
+  } else {
+    // Only one image found, use its path
+    imagePath = path.join(imagesFolder, imageFiles[0]);
+  }
 
   // Read the image file as a buffer
   const imageBuffer = fs.readFileSync(imagePath);
@@ -168,7 +240,7 @@ app.get("/getDeviceInfo", async (req, res) => {
   const formData = new FormData();
 
   // Append the image file to the FormData object
-  formData.append("file", imageBuffer, { filename: "image.jpg" });
+  formData.append("file", imageBuffer, { filename: "test.jpg" });
 
   try {
     // Send a POST request to the prediction endpoint
@@ -270,6 +342,21 @@ app.get("/getDeviceInfo", async (req, res) => {
 
     // Send the response back with the food details
     res.json({ total_calories_taken: dailyLog.totalCalories, instances: instancesWithCalories });
+    
+    // Empty the images folder
+    const imagesFolder = path.join(__dirname, 'images');
+    fs.readdir(imagesFolder, (err, files) => {
+      if (err) {
+        console.error('Error reading images folder:', err);
+      } else {
+        files.forEach(file => {
+          const filePath = path.join(imagesFolder, file);
+          fs.unlinkSync(filePath);
+        });
+        console.log('Images folder emptied.');
+      }
+    });
+
   } catch (error) {
     console.error("Error fetching device information:", error);
     res.status(500).json({ error: "Internal Server Error" });
