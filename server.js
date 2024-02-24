@@ -1,37 +1,88 @@
 const express = require("express");
 const cors = require("cors");
-const app = express();
-const mongoose = require('mongoose')
+const mongoose = require('mongoose');
 require('dotenv').config();
 const axios = require("axios");
+const passport = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
+const session = require("express-session");
+const flash = require("connect-flash");
+const bcrypt = require('bcrypt');
 const FormData = require("form-data");
-const { getCalorie } = require("./api_request");
-
-
-const fs = require("fs"); //for image handling.
-app.use(cors());
-app.use(express.json());
-
-// Connection string of MongoDB
-const connection_url = "Your Mongo URI";
-
-mongoose.connect(connection_url);
+const { getCalorie } = require("./routes/api_request");
+const jwt = require('jsonwebtoken');
 
 // Importing the User model
 const User = require("./model/userModel");
 
-// Route to register a new user
+const fs = require("fs"); //for image handling.
+const { Console } = require("console");
+const { userInfo } = require("os");
+
+const app = express();
+
+// Session middleware
+app.use(session({
+  secret: "your-secret-key",
+  resave: false,
+  saveUninitialized: false
+}));
+
+// Initialize Passport after initializing session middleware
+app.use(passport.initialize());
+app.use(passport.session());
+
+app.use(cors());
+app.use(express.json());
+app.use(flash())
+
+// Connection string of MongoDB
+const connection_url = "Your Mongo URL";
+mongoose.connect(connection_url);
+
+passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
+  try {
+    const user = await User.findOne({ email });
+    if (!user || user.password !== password) {
+      return done(null, false, { message: 'Incorrect email or password' });
+    }
+    return done(null, user);
+  } catch (error) {
+    return done(error);
+  }
+}));
+
+passport.serializeUser((user, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (error) {
+    done(error);
+  }
+});
+
+
 app.post("/register", async (req, res) => {
   try {
-    const registrationData = req.body;
+    // Extract registration data from request body
+    const { name, email, password, age, height, weight, calorieGoalPerDay } = req.body;
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create a new user document using the User model
     const newUser = new User({
-      name: registrationData.name,
-      age: registrationData.age,
-      height: registrationData.height,
-      weight: registrationData.weight,
-      calorieGoalPerDay: registrationData.calorieGoalPerDay,
+      name,
+      email,
+      password: hashedPassword, // Save hashed password to the database
+      age,
+      height,
+      weight,
+      calorieGoalPerDay,
       dailyLogs: [] // Initial daily logs array is empty
     });
 
@@ -47,18 +98,56 @@ app.post("/register", async (req, res) => {
   }
 });
 
+// Login endpoint
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    // If user not found or password doesn't match, return 401 status code
+    if (!user || !user.validatePassword(password)) {
+      return res.status(401).json({ success: false, error: "Invalid email or password" });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign({ userId: user._id }, 'your_secret_key', { expiresIn: '1h' }); // Change 'your_secret_key' to a long, randomly generated string
+
+    // Send token in response
+    res.json({ success: true, token });
+
+  } catch (error) {
+    console.error('Error logging in:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // Route to get user details
 app.get("/getUserDetails", async (req, res) => {
   try {
-    // Retrieve the first user document from the database
-    const latestUser = await User.findOne().sort({ _id: -1 });
+    // Check if Authorization header is present
+    const token = req.headers.authorization;
 
-    if (!latestUser) {
-      return res.status(404).json({ message: "No user found" });
+    if (!token) {
+      return res.status(401).json({ message: "Authorization header missing" });
     }
 
-    // Send the retrieved user details as a response
-    res.json(latestUser);
+    // Verify the token (You need to implement this part using your authentication mechanism)
+    // For example, if you are using JWT:
+    const decoded = jwt.verify(token.split(' ')[1], 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Retrieve the user details based on the user ID obtained from the token
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Send the user details as a response
+    console.log("User found!", user);
+    res.json(user);
   } catch (error) {
     console.error('Error retrieving user details:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -67,6 +156,7 @@ app.get("/getUserDetails", async (req, res) => {
 
 // Route to get device information and detect food items
 app.get("/getDeviceInfo", async (req, res) => {
+
   const { dateTime } = req.query; // Get date-time from the query parameters
 
   const imagePath = "test.jpg";
@@ -91,12 +181,32 @@ app.get("/getDeviceInfo", async (req, res) => {
     console.log("File uploaded successfully.");
     console.log(response.data);
 
-    // Extract detected food items from the response
-    const detectedInstances = response.data.detected_instances.map(async (instance) => ({
-      foodName: instance.class_name,
-      serving: "1.5 gm", // Assuming serving size for each detected instance is 1
-      calories: await getCalorie(`1.5gm ${instance.class_name}`), // Get calorie count for each food item
-    }));
+        // Extract detected food items from the response
+        const detectedInstances = response.data.detected_instances.map(async (instance) => {
+          let servingSize = 60; // Default serving size
+    
+          // Adjust serving size based on food type
+          switch (instance.class_name.toLowerCase()) {
+            case "rice":
+              servingSize = 160 * 0.80; // Rice density: 0.80 g/cm^3
+              break;
+            case "spinach":
+              servingSize = 160 * 1.016; // Spinach density: 1.016 g/cm^3
+              break;
+            case "lentils":
+              servingSize = 160 * 0.85; // Lentils density: 0.85 g/cm^3
+              break;
+            default:
+              break;
+          }
+    
+          return {
+            foodName: instance.class_name,
+            serving: servingSize.toFixed(2) + " gm",
+            calories: await getCalorie(`${servingSize.toFixed(2)}gm ${instance.class_name}`), // Get calorie count for each food item
+          };
+        });
+
 
     // Wait for all promises to resolve
     const instancesWithCalories = await Promise.all(detectedInstances);
@@ -104,16 +214,31 @@ app.get("/getDeviceInfo", async (req, res) => {
     // Calculate total calories for the day
     const totalCalories = instancesWithCalories.reduce((total, instance) => total + instance.calories, 0);
 
-    // Find the latest user
-    const latestUser = await User.findOne().sort({ _id: -1 });
+    // Round the total calories to 2 decimal points
+    const roundedTotalCalories = totalCalories.toFixed(0);
 
-    if (!latestUser) {
-      return res.status(404).json({ error: "No user found" });
+    // Check if Authorization header is present
+    const token = req.headers.authorization;
+
+    if (!token) {
+      return res.status(401).json({ message: "Authorization header missing" });
+    }
+
+    // Verify the token (You need to implement this part using your authentication mechanism)
+    // For example, if you are using JWT:
+    const decoded = jwt.verify(token.split(' ')[1], 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Retrieve the user details based on the user ID obtained from the token
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
 
     // Check if a daily log exists for the current day
     const currentDate = new Date().toDateString();
-    let dailyLog = latestUser.dailyLogs.find(log => log.day.toDateString() === currentDate);
+    let dailyLog = user.dailyLogs.find((log) => log.day.toDateString() === currentDate);
 
     if (!dailyLog) {
       // If no daily log exists for the specified date, create a new one
@@ -123,36 +248,49 @@ app.get("/getDeviceInfo", async (req, res) => {
         totalCalories: 0,
       };
       // Push the newly created daily log to the user's dailyLogs array
-      latestUser.dailyLogs.push(dailyLog);
-
-      // Save the updated user document with the new daily log
-      await latestUser.save();
+      user.dailyLogs.push(dailyLog);
+      await user.save();
     }
-
+    
     // Add the detected food items to the foodEaten array
     dailyLog.foodEaten.push(...instancesWithCalories);
-
+    
     // Update the total calories for the day
-    dailyLog.totalCalories += totalCalories;
-
+    dailyLog.totalCalories += parseFloat(roundedTotalCalories); // Parse to float for addition
+    
     // rounding off the calorie values.
-    dailyLog.totalCalories.toFixed(0);
-
-    // Update the daily log in the user document
-    await User.findOneAndUpdate(
-      { _id: latestUser._id, "dailyLogs.day": dailyLog.day },
+    dailyLog.totalCalories = dailyLog.totalCalories.toFixed(2);
+    
+     // Update the daily log in the user document
+     await User.findOneAndUpdate(
+      { _id: user._id, "dailyLogs.day": dailyLog.day },
       { $set: { "dailyLogs.$": dailyLog } },
       { upsert: true }
     );
 
     // Send the response back with the food details
     res.json({ total_calories_taken: dailyLog.totalCalories, instances: instancesWithCalories });
-
   } catch (error) {
-    console.error('Error fetching device information:', error);
+    console.error("Error fetching device information:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+// Logout endpoint
+app.post("/logout", (req, res) => {
+  try {
+    // Clear the token from the client-side (for example, remove it from local storage or cookies)
+    // Here, we'll assume the token is stored in a cookie named 'token'
+    localStorage.removeItem('token');
+    
+    // Send a response indicating successful logout
+    res.json({ message: "Logged out successfully" });
+  } catch (error) {
+    console.error('Error logging out:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 
 // Start the server
 const PORT = 4000;
