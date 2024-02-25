@@ -3,15 +3,14 @@ const cors = require("cors");
 const mongoose = require('mongoose');
 require('dotenv').config();
 const axios = require("axios");
-const passport = require('passport');
-const LocalStrategy = require('passport-local').Strategy;
 const session = require("express-session");
 const bcrypt = require('bcrypt');
 const FormData = require("form-data");
 const { getCalorie } = require("./routes/api_request");
 const jwt = require('jsonwebtoken');
 const path = require('path'); // Add this line to import the path module
-const { exec } = require('child_process');
+require('dotenv').config();
+
 
 // Importing the User model
 const User = require("./model/userModel");
@@ -28,41 +27,13 @@ app.use(session({
   saveUninitialized: false
 }));
 
-// Initialize Passport after initializing session middleware
-app.use(passport.initialize());
-app.use(passport.session());
-
 app.use(cors());
 app.use(express.json());
 
 // Connection string of MongoDB
-const connection_url = "You Mongo Key";
+const connection_url = process.env.MONGO_URL;
 mongoose.connect(connection_url);
 
-passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
-  try {
-    const user = await User.findOne({ email });
-    if (!user || user.password !== password) {
-      return done(null, false, { message: 'Incorrect email or password' });
-    }
-    return done(null, user);
-  } catch (error) {
-    return done(error);
-  }
-}));
-
-passport.serializeUser((user, done) => {
-  done(null, user.id);
-});
-
-passport.deserializeUser(async (id, done) => {
-  try {
-    const user = await User.findById(id);
-    done(null, user);
-  } catch (error) {
-    done(error);
-  }
-});
 
 app.post("/register", async (req, res) => {
   try {
@@ -229,22 +200,6 @@ app.delete("/deleteImage", (req, res) => {
 });
 
 
-// // Route to get device information and detect food items
-// // Full or relative path to your Python script
-// const batchFilePath = "D:\\SmartCal-Final\\server\\path.bat";
- 
-
-// // Activate the virtual environment using activate
-// exec(`${batchFilePath}`, (error, stdout, stderr) => {
-//     if (error) {
-//         console.error(`Error: ${error.message}`);
-//         return;
-//     }
- 
-//     console.log(`Output:\n${stdout}`);
-// });
-
-
 app.get("/getDeviceInfo", async (req, res) => {
   try {
     const { dateTime } = req.query; // Get date-time from the query parameters
@@ -284,6 +239,12 @@ app.get("/getDeviceInfo", async (req, res) => {
 
         console.log("File uploaded successfully.");
         console.log(response.data);
+
+        // Extract detected food items and visualized image from the response
+        const { detected_instances, visualized_image } = response.data;
+
+        // Process detected instances as needed
+        console.log(detected_instances);
 
         // Extract detected food items from the response
         const detectedInstances = await Promise.all(response.data.detected_instances.map(async (instance) => {
@@ -365,8 +326,12 @@ app.get("/getDeviceInfo", async (req, res) => {
           { upsert: true }
         );
 
-        // Send the response back with the food details
-        res.json({ total_calories_taken: dailyLog.totalCalories, instances: detectedInstances });
+       // Decode the base64 encoded visualized image
+      //  const visualizedImageData = Buffer.from(visualized_image, 'base64');
+
+
+        // Send the response back with the food details and visualized image
+        res.json({ total_calories_taken: dailyLog.totalCalories, instances: detectedInstances, visualized_image: visualized_image});
 
         // Empty the images folder's first file.
         fs.readdir(imagesFolder, (err, files) => {
@@ -393,6 +358,8 @@ app.get("/getDeviceInfo", async (req, res) => {
   }
 });
 
+
+
 // POST route to handle updating user details
 app.post("/updatedetails", async (req, res) => {
   try {
@@ -407,10 +374,10 @@ app.post("/updatedetails", async (req, res) => {
     // For example, if you are using JWT:
     const decoded = jwt.verify(token.split(' ')[1], 'your_secret_key');
     const userId = decoded.userId;
-    
+
     // Extract updated details from the request body
     const { name, age, weight, height, calorieGoalPerDay } = req.body;
-    
+
     // Update the user details in the database
     await User.findByIdAndUpdate(userId, {
       name,
@@ -419,7 +386,7 @@ app.post("/updatedetails", async (req, res) => {
       height,
       calorieGoalPerDay
     });
-    
+
     res.status(200).json({ message: "User details updated successfully" });
   } catch (error) {
     console.error('Error updating user details:', error);
@@ -434,7 +401,7 @@ app.post("/logout", (req, res) => {
     // Clear the token from the client-side (for example, remove it from local storage or cookies)
     // Here, we'll assume the token is stored in a cookie named 'token'
     localStorage.removeItem('token');
-    
+
     // Send a response indicating successful logout
     res.json({ message: "Logged out successfully" });
   } catch (error) {
