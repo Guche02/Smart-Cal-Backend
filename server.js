@@ -36,7 +36,7 @@ app.use(cors());
 app.use(express.json());
 
 // Connection string of MongoDB
-const connection_url = "mongodb+srv://loozasubedy998:mongo%40jojo.com@cluster0.0h7kiso.mongodb.net/SmartcalDB?retryWrites=true&w=majority";
+const connection_url = "You Mongo Key";
 mongoose.connect(connection_url);
 
 passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
