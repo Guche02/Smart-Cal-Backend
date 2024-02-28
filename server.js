@@ -40,8 +40,15 @@ app.post("/register", async (req, res) => {
     // Extract registration data from request body
     const { name, email, password, age, height, weight, calorieGoalPerDay } = req.body;
 
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Check if the email already exists
+    const existingUser = await User.findOne({ email });
+    // If user already exists, return 409 status code with error message
+
+    if (existingUser) {
+      return res.json({ success: false, error: "Email already exists" });
+    }
+
+    if (!existingUser) {
 
     // Create a new user document using the User model
     const newUser = new User({
@@ -59,8 +66,9 @@ app.post("/register", async (req, res) => {
     await newUser.save();
 
     // Send a response back to the client
-    res.json({ message: "User registered successfully", user: newUser });
+    res.json({ success: true, message: "User registered successfully", user: newUser });
     console.log("Data registered successfully!");
+  } 
   } catch (error) {
     console.error('Error registering user:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -75,9 +83,17 @@ app.post("/login", async (req, res) => {
     // Find user by email
     const user = await User.findOne({ email });
 
-    // If user not found or password doesn't match, return 401 status code
-    if (!user || !user.validatePassword(password)) {
-      return res.status(401).json({ success: false, error: "Invalid email or password" });
+    // If user not found, return 401 status code with error message
+    if (!user) {
+      return res.status(401).json({ success: false, error: "Invalid Email or Password" });
+    }
+
+    // Check if the password matches
+    const isPasswordValid = await user.validatePassword(password);
+
+    if (!isPasswordValid) {
+      // If password is invalid, return 401 status code with error message
+      return res.status(401).json({ success: false, error: "Invalid Email or Password" });
     }
 
     // Generate JWT token
@@ -91,6 +107,8 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+
 
 // Route to get user details
 app.get("/getUserDetails", async (req, res) => {
