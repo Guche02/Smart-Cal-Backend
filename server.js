@@ -10,6 +10,7 @@ const { getCalorie } = require("./routes/api_request");
 const jwt = require('jsonwebtoken');
 const path = require('path'); // Add this line to import the path module
 require('dotenv').config();
+const { verifyEmail } = require("./routes/verifyEmail")
 
 
 // Importing the User model
@@ -22,7 +23,7 @@ const app = express();
 
 // Session middleware
 app.use(session({
-  secret: "your-secret-key",
+  secret: process.env.SECRET_KEY,
   resave: false,
   saveUninitialized: false
 }));
@@ -40,15 +41,21 @@ app.post("/register", async (req, res) => {
     // Extract registration data from request body
     const { name, email, password, age, height, weight, calorieGoalPerDay } = req.body;
 
+    const verify = await verifyEmail(email)
+    
+    if (!verify) {
+      return res.json({success: false, error: "Invalid Email Address!"})
+    }
     // Check if the email already exists
     const existingUser = await User.findOne({ email });
     // If user already exists, return 409 status code with error message
 
     if (existingUser) {
-      return res.json({ success: false, error: "Email already exists" });
-    }
+      return res.json({ success: false, error: "Email already exists!" });
+    } else {
 
-    if (!existingUser) {
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10)
 
     // Create a new user document using the User model
     const newUser = new User({
